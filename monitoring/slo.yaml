@@ -1,0 +1,28 @@
+# Lab 4 — service level objectives.
+#
+# Most students write a target and stop. The third field is where the thinking is: an SLO
+# without a stated response to exhaustion is a wish, not an objective.
+
+service: itcs355-predict
+
+objectives:
+  - name: availability
+    target: 0.995              # 99.5% over 30d window: allows ~3.6h downtime/month for updates while preventing customer impact
+    window: 30d
+    measurement: "successful responses / total responses, excluding 4xx"
+    on_budget_exhausted: |
+      Immediately freeze CD deployments to staging and production, redirect traffic to local fallback heuristic baselines, page the on-call ML engineer, and allocate engineering capacity exclusively to reliability fixes until availability recovers above 99.5%.
+
+  - name: latency
+    target_p95_ms: 200         # Matches p(95) < 200ms threshold declared in loadtest/k6.js
+    window: 7d
+    measurement: "p95 of /predict, measured at the endpoint, not at the client"
+    on_budget_exhausted: |
+      Scale online endpoint instance count horizontally, reject non-essential batch requests exceeding concurrency limits, and profile feature pre-processing latency bottlenecks before releasing any new model revisions.
+
+  - name: freshness
+    target_max_model_age_days: 30
+    window: continuous
+    measurement: "days since the production model version was trained"
+    on_budget_exhausted: |
+      Automatically trigger a scheduled retraining pipeline against validated reference data; if data drift tests or evaluation gates fail, block auto-promotion and page the ML engineer for manual inspection of upstream feature distribution shifts.

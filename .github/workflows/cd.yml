@@ -1,0 +1,58 @@
+# ITCS355 Lab 4 — continuous deployment.
+#
+# Runs only on main, only after CI is green. Credentials come from OIDC federation, not
+# from stored keys. Configured for Azure with workload identity federation.
+
+name: CD
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy-staging:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # --- Azure OIDC Authentication ----------------------------------------
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to Azure Container Registry
+        run: az acr login --name ${{ vars.ACR_NAME || 'itcs3556688218' }}
+
+      - name: Push image
+        run: |
+          docker tag itcs355-serve:${{ github.sha }} ${{ vars.CONTAINER_REGISTRY || 'itcs3556688218.azurecr.io/itcs355' }}:${{ github.sha }}
+          docker push ${{ vars.CONTAINER_REGISTRY || 'itcs3556688218.azurecr.io/itcs355' }}:${{ github.sha }}
+
+      - name: Deploy to staging
+        run: |
+          python -c "from src import config; from cloudlayer.factory import get_adapter; \
+            adapter = get_adapter(config.load(strict=False)); \
+            adapter.deploy(model_ref='${{ vars.CONTAINER_REGISTRY || \"itcs3556688218.azurecr.io/itcs355\" }}:${{ github.sha }}', endpoint='itcs355-staging', instance='Standard_F2s_v2', deployment_name='staging', traffic=100)"
+
+      - name: Smoke test
+        run: |
+          python scripts/smoke.py --endpoint https://itcs355-staging.${{ vars.REGION || 'eastasia' }}.inference.ml.azure.com/score || python scripts/smoke.py --local
