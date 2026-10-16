@@ -1,13 +1,13 @@
 # ITCS355 Lab 1 — training image
 #
 # TODO(Lab 1, Task 2): pin this base image BY DIGEST, not by tag.
-#   Tags move. `python:3.11-slim` today is not `python:3.11-slim` next month, and a
+#   Tags move. `python:3.12-slim` today is not `python:3.12-slim` next month, and a
 #   moving base is the commonest reason a "reproducible" build stops reproducing.
 #   Get the digest with:
-#       docker pull python:3.11-slim && docker inspect --format='{{index .RepoDigests 0}}' python:3.11-slim
+#       docker pull python:3.12-slim && docker inspect --format='{{index .RepoDigests 0}}' python:3.12-slim
 #   Then replace the two FROM lines below with the digest form:
 #       FROM python@sha256:<digest> AS builder
-FROM python:3.11-slim AS builder
+FROM python:3.12-slim AS builder
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -22,7 +22,7 @@ COPY requirements.txt ./
 RUN pip install --prefix=/install -r requirements.txt
 
 
-FROM python:3.11-slim AS runtime
+FROM python:3.12-slim AS runtime
 
 # Non-root. A training container has no reason to run as root, and graders check.
 RUN useradd --create-home --uid 10001 runner

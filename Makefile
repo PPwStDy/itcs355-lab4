@@ -7,7 +7,7 @@ TAG   ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 PLATFORM ?= linux/amd64
 SEED ?= 20260101
 
-.PHONY: help setup cloud-check data test portability-audit train image image-push reproduce verify clean teardown \
+.PHONY: help setup cloud-check data test portability-audit train image image-push reproduce verify clean teardown teardown-cloud \
         tune compare reload-check serve serve-image loadtest drift inject-drift pipeline cost swap-check llm-eval llm-gate
 
 help:
@@ -50,9 +50,11 @@ reproduce: data image ## THE ONE COMMAND. Grader runs this.
 verify: ## Check the produced metric against the README claim
 	python scripts/verify_metric.py
 
-teardown: ## Delete every resource tagged course=itcs355 for this lab
-	python -c "from src import config; from cloudlayer.factory import get_adapter; \
-	cfg=config.load(); print(get_adapter(cfg).teardown(cfg.tags(1)))"
+teardown: ## Stop the local Lab 4 monitoring stack
+	python scripts/teardown_lab4.py
+
+teardown-cloud: ## Delete only Lab 4 tagged schedules/endpoints in the configured Azure workspace
+	python scripts/teardown_lab4.py --cloud
 
 clean: ## Remove local artifacts
 	rm -rf mlruns mlartifacts mlflow.db reports/metrics.json .pytest_cache

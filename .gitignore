@@ -29,3 +29,8 @@ __pycache__/
 .DS_Store
 reports/azureml-logs*/
 
+
+# Retain only reviewed, non-secret exercise evidence.
+!reports/evidence/*.json
+!reports/evidence/*.txt
+!reports/threshold-calibration.json

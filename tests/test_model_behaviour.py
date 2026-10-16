@@ -26,11 +26,11 @@ LATENCY_BUDGET_MS = 200.0  # Aligned with p95 target (200ms) declared in loadtes
 @pytest.fixture(scope="module")
 def fitted():
     if not RAW.exists():
-        pytest.skip("run `make data` first")
+        pytest.fail("run `make data` first")
     seed = seeds.set_all()
     df = data.load_raw(RAW)
     train_df, _, test_df = data.split(df, seed=seed)
-    model = RandomForestClassifier(n_estimators=120, max_depth=8, min_samples_leaf=5,
+    model = RandomForestClassifier(n_estimators=200, max_depth=8, min_samples_leaf=5,
                                    random_state=seed, n_jobs=-1)
     model.fit(train_df[data.FEATURES], train_df[data.TARGET])
     return model, test_df

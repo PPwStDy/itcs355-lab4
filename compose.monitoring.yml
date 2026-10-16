@@ -1,0 +1,42 @@
+services:
+  service:
+    build:
+      context: .
+      dockerfile: service/Dockerfile.serve
+    ports: ['127.0.0.1:8080:8080']
+    environment:
+      MODEL_PATH: /app/reports/model.joblib
+      MODEL_VERSION: ${MODEL_VERSION:-local-lab4}
+      DRIFT_REFERENCE_PATH: /app/data/raw/sensors.csv
+      MONITORING_TOKEN: ${MONITORING_TOKEN:?Set MONITORING_TOKEN}
+    volumes:
+      - ./reports:/app/reports:ro
+      - ./data:/app/data:ro
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    ports: ['127.0.0.1:9090:9090']
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+    depends_on: [service]
+  grafana:
+    image: grafana/grafana:11.6.0
+    ports: ['127.0.0.1:3000:3000']
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD}
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/dashboard.json:/var/lib/grafana/dashboards/lab4.json:ro
+    depends_on: [prometheus]
+  detector:
+    build:
+      context: .
+      dockerfile: service/Dockerfile.serve
+    environment:
+      DRIFT_WINDOW_URL: http://service:8080/monitoring/window
+      MONITORING_TOKEN: ${MONITORING_TOKEN:?Set MONITORING_TOKEN}
+      DRIFT_ALERT_WEBHOOK_URL: ${DRIFT_ALERT_WEBHOOK_URL:?Set the Slack incoming webhook URL}
+    volumes:
+      - ./data:/app/data:ro
+    command: ['python', '-u', 'scripts/drift_worker.py']
+    depends_on: [service]

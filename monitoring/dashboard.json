@@ -1,25 +1,209 @@
 {
-  "_comment": "Lab 4 — dashboard as code. Portable Grafana definition; import it, or translate the panels to CloudWatch / Azure Monitor / Cloud Monitoring. Committing the dashboard is better than clicking one together, and is noted favourably.",
-  "title": "ITCS355 — Prediction service",
-  "refresh": "30s",
+  "uid": "lab4",
+  "title": "Lab 4 prediction service",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
   "panels": [
-    {"id": 1, "title": "Request rate", "type": "timeseries", "unit": "reqps",
-     "target": "sum(rate(http_requests_total[1m]))"},
-    {"id": 2, "title": "Error rate by class", "type": "timeseries", "unit": "percentunit",
-     "target": "sum by (status_class) (rate(http_requests_total{status_class=~\"4xx|5xx\"}[5m])) / sum(rate(http_requests_total[5m]))",
-     "_note": "4xx and 5xx must be split. 4xx is usually a caller problem; 5xx is yours."},
-    {"id": 3, "title": "Latency p50 / p95 / p99", "type": "timeseries", "unit": "ms",
-     "targets": [
-       "histogram_quantile(0.50, sum by (le) (rate(request_latency_ms_bucket[5m])))",
-       "histogram_quantile(0.95, sum by (le) (rate(request_latency_ms_bucket[5m])))",
-       "histogram_quantile(0.99, sum by (le) (rate(request_latency_ms_bucket[5m])))"
-     ],
-     "_note": "If p99 is far above p95 in a repeating pattern, suspect cold start or a per-request model load."},
-    {"id": 4, "title": "Feature drift (PSI, rolling)", "type": "timeseries",
-     "target": "drift_psi_temp_c",
-     "_note": "Rolling PSI of feature temp_c computed against training baseline window and emitted via adapter.emit_metric. Alert rule triggers when PSI >= 0.20."},
-    {"id": 5, "title": "Model version in production", "type": "stat",
-     "target": "model_version_info",
-     "_note": "During a canary you should see two. If you see two when you are not deploying, something is wrong."}
+    {
+      "id": 1,
+      "title": "Request rate",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(http_requests_total{route=~\"/predict.*\"}[1m]))",
+          "legendFormat": "{{feature}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Error rate by class",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status_class) (rate(http_requests_total{status_class=~\"4xx|5xx\",route=~\"/predict.*\"}[5m])) / scalar(sum(rate(http_requests_total{route=~\"/predict.*\"}[5m])))",
+          "legendFormat": "{{status_class}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Latency p50 / p95 / p99",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(request_latency_ms_bucket{route=~\"/predict.*\"}[5m])))",
+          "legendFormat": "0.5"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(request_latency_ms_bucket{route=~\"/predict.*\"}[5m])))",
+          "legendFormat": "0.95"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(request_latency_ms_bucket{route=~\"/predict.*\"}[5m])))",
+          "legendFormat": "0.99"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Feature mean (five minute input window)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "options": {
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "feature_mean{feature=\"temp_c\"}",
+          "legendFormat": "{{feature}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Feature drift PSI (five minute input window)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "drift_psi{feature=\"temp_c\"}",
+          "legendFormat": "{{feature}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Model version in production",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "textMode": "name"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "model_version_info",
+          "legendFormat": "{{version}}"
+        }
+      ]
+    }
   ]
 }

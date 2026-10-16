@@ -20,7 +20,7 @@ VALID = {
 @pytest.fixture(scope="module")
 def client():
     if not RAW.exists():
-        pytest.skip("run `make data` first")
+        pytest.fail("run `make data` first")
     model_path = config.REPO_ROOT / "reports" / "model.joblib"
     if not model_path.exists():
         import joblib

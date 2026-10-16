@@ -563,35 +563,34 @@ class AzureAdapter(CloudAdapter):
             "tags": self.cfg.tags(4),
         }
 
-        # Check for Application Insights connection string / instrumentation key
+        import urllib.request
+
         conn_str = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
-        ikey = os.environ.get("APPINSIGHTS_INSTRUMENTATIONKEY", "")
-        if conn_str or ikey:
-            try:
-                import urllib.request
-                track_url = "https://dc.services.visualstudio.com/v2/track"
-                telemetry = {
-                    "name": "Microsoft.ApplicationInsights.Metric",
-                    "time": timestamp,
-                    "iKey": ikey or (dict(part.split("=", 1) for part in conn_str.split(";")).get("InstrumentationKey", "")),
-                    "data": {
-                        "baseType": "MetricData",
-                        "baseData": {
-                            "metrics": [{"name": name, "value": float(value), "count": 1}],
-                            "properties": record["tags"],
-                        },
-                    },
-                }
-                req = urllib.request.Request(
-                    track_url,
-                    data=json.dumps(telemetry).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    pass
-            except Exception as e:
-                print(f"[Azure Monitor] Metric dispatch note: {e}")
+        parts = dict(part.split("=", 1) for part in conn_str.split(";") if "=" in part)
+        ikey = os.environ.get("APPINSIGHTS_INSTRUMENTATIONKEY") or parts.get("InstrumentationKey")
+        if not ikey:
+            raise RuntimeError("Configure Application Insights before emitting cloud metrics")
+        endpoint = parts.get("IngestionEndpoint", "https://dc.services.visualstudio.com")
+        telemetry = {
+            "name": "Microsoft.ApplicationInsights.Metric",
+            "time": timestamp,
+            "iKey": ikey,
+            "data": {"baseType": "MetricData", "baseData": {
+                "ver": 2,
+                "metrics": [{"name": name, "value": float(value), "count": 1}],
+                "properties": record["tags"],
+            }},
+        }
+        req = urllib.request.Request(
+            endpoint.rstrip("/") + "/v2/track",
+            data=json.dumps(telemetry).encode("utf-8"),
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as response:
+            receipt = json.loads(response.read())
+            if not 200 <= response.status < 300 or receipt.get("itemsAccepted") != 1:
+                raise RuntimeError("Application Insights rejected the metric")
+        record["cloud_acknowledged"] = True
 
         # Record metric to reports/metrics_emitted.jsonl for verification
         self.cfg.reports_dir.mkdir(parents=True, exist_ok=True)

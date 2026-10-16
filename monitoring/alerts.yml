@@ -1,0 +1,16 @@
+groups:
+  - name: model-inputs
+    rules:
+      - alert: FeatureDrift
+        expr: drift_psi >= 0.20
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Feature {{ $labels.feature }} drifted (PSI {{ $value }})'
+          action: 'Check upstream calibration and contracts before retraining.'
+      - alert: PredictionServiceDown
+        expr: up{job="prediction"} == 0
+        for: 1m
+        labels:
+          severity: critical

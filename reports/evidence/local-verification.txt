@@ -1,0 +1,26 @@
+Lab 4 local verification
+Recorded UTC: 2026-10-16T07:25:33.949495+00:00
+
+Python: 3.12.2 (isolated Lab4/.venv)
+pytest -q tests: 49 passed, 1 third-party deprecation warning
+ruff check src/ service/ monitoring/ scripts/ tests/: passed
+portability audit: passed
+relative link check: 40 checked, 0 broken
+workflow/monitoring/compose/generated schedule YAML: parsed
+git diff --check: passed
+
+Real localhost HTTP check (temporary Uvicorn process, stopped afterwards):
+- readiness and prediction response shape: passed
+- expected version in body and response header: passed
+- request counts and latency histogram exported: passed
+- 300 shifted prediction inputs: rolling temp_c PSI 0.37815 >= 0.20
+- unauthenticated monitoring-window access rejected: passed
+
+Calibration: 500 bootstrap windows, seed 42, 300 rows/window;
+baseline PSI p99 0.0644489631; baseline false-alert fraction 0;
++6 C shift detection fraction 1 in the simulation.
+
+Limitations: no real notification was attempted; mock transport tests are unit tests only.
+Docker app executable is missing, so container/Prometheus/Grafana verification could not run.
+No cloud resource was deployed, no remote commit/PR was created, and no cloud teardown was executed.
+GitHub CLI authentication was unavailable; real Actions and PR evidence remain pending.

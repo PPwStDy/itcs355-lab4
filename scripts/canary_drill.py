@@ -10,10 +10,8 @@ Executes:
 """
 from __future__ import annotations
 
-import argparse
 import datetime
 import json
-import os
 import random
 import sys
 import time
@@ -131,7 +129,6 @@ def main():
             version = "3"
             score = score_request(stable_model, p)
 
-        req_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
         log_entry("DEBUG", "Inference served", {
             "version": version,
             "score": round(score, 4),
@@ -144,7 +141,6 @@ def main():
 
         # Detection Metric: population rate of scores exceeding anomaly threshold
         current_rate = sum(1 for s in rolling_window if s > 0.15) / len(rolling_window)
-        elapsed_since_deploy = time.time() - t_deploy
 
         # If rate shifts > 2.0x above baseline after at least 30 samples, alarm triggers!
         if len(rolling_window) >= 30 and current_rate >= 2.0 * max(baseline_high_risk_rate, 0.08) and not detected:
@@ -222,7 +218,7 @@ def main():
     }
     with open("reports/canary_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
-    print(f"Wrote canary summary answers to reports/canary_summary.json")
+    print("Wrote canary summary answers to reports/canary_summary.json")
 
 
 if __name__ == "__main__":

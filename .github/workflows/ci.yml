@@ -1,102 +1,81 @@
-# ITCS355 Lab 4 — continuous integration.
-#
-# The sequence matters: cheap checks first, so a schema mistake fails in 30 seconds
-# rather than after a build. Deploy is in cd.yml and runs only on main, only on green.
-
 name: CI
-
 on:
   pull_request:
   push:
     branches: [main]
-
 permissions:
   contents: read
-  id-token: write        # required for OIDC. See cd.yml — no long-lived keys anywhere.
-
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.12'
           cache: pip
-
-      - name: Install
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
-          # TODO(Lab 4): once requirements.txt carries hashes, add --require-hashes.
-
+      - run: pip install -r requirements.txt
       - name: Lint
-        # ruff is pinned in requirements.txt and installed above. Installing it unpinned
-        # here would let a new ruff release fail this build on unchanged code.
         run: ruff check src/ service/ monitoring/ scripts/ tests/
-
       - name: Portability audit
         run: python scripts/portability_audit.py
-
       - name: Generate dataset
         run: python scripts/make_dataset.py
-
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          name: training-reference
+          path: data/raw/sensors.csv
+          retention-days: 90
+      - name: Unit tests
+        run: pytest -q tests/test_data.py -k 'split or fingerprint'
       - name: Data contract tests
-        run: pytest -q tests/test_data.py
-
+        run: pytest -q tests/test_data.py -k 'not split and not fingerprint'
       - name: Model behaviour tests
         run: pytest -q tests/test_model_behaviour.py
-
-      - name: Service tests
-        run: pytest -q tests/test_service.py
-
+      - name: Service and monitoring tests
+        run: pytest -q tests/test_service.py tests/test_monitoring.py
   build:
     needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: docker/setup-buildx-action@v3
-
-      # The integration test below runs make_dataset/train/export on the runner to
-      # produce the artefact the serving container is then asked to serve, so this job
-      # needs the same interpreter and pins as the test job.
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.12'
           cache: pip
-
-      - name: Install
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Build training image
-        run: docker buildx build --platform linux/amd64 -t itcs355:${{ github.sha }} --load .
-
-      - name: Build serving image
-        run: docker buildx build --platform linux/amd64 -f service/Dockerfile.serve -t itcs355-serve:${{ github.sha }} --load .
-
-      - name: Integration test
+      - run: pip install -r requirements.txt
+      - uses: docker/setup-buildx-action@v3
+      - name: Export model with the serving dependency versions
         run: |
           python scripts/make_dataset.py
-          python -m src.train --metrics-out reports/metrics.json
           python scripts/export_model.py --out reports/model.joblib
+      - name: Build training image
+        run: docker buildx build --platform linux/amd64 -t itcs355:${{ github.sha }} --load .
+      - name: Build serving image
+        run: docker buildx build --platform linux/amd64 -f service/Dockerfile.serve -t itcs355-serve:${{ github.sha }} --load .
+      - name: Integration test
+        env:
+          EXPECTED_VERSION: ${{ github.sha }}
+        run: |
+          trap 'docker logs svc; docker stop svc' EXIT
           docker run -d --rm --name svc -p 8080:8080 \
             -v "$PWD/reports:/app/reports:ro" \
             -e MODEL_PATH=/app/reports/model.joblib \
-            -e MODEL_VERSION=${{ github.sha }} \
-            itcs355-serve:${{ github.sha }}
-          for i in $(seq 1 30); do
-            curl -sf localhost:8080/ready && break || sleep 2
-          done
-          curl -sf -X POST localhost:8080/predict \
-            -H 'content-type: application/json' \
-            -d '{"temp_c":78.4,"vibration_mm_s":3.1,"pressure_kpa":315.2,"hours_since_service":4200,"load_pct":68,"ambient_humidity":55}' \
-            | tee /dev/stderr | grep -q probability
-          docker stop svc
-
-      # Images are tagged with the commit SHA, never `latest`. A `latest` tag makes it
-      # impossible to say which code is serving, which is the question you will be asked
-      # during an incident.
+            -e MODEL_VERSION="$EXPECTED_VERSION" \
+            itcs355-serve:"$EXPECTED_VERSION"
+          python scripts/check_container.py
+      - name: Save tested image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker save itcs355-serve:${{ github.sha }} -o reports/serving-image.tar
+          cp data/raw/sensors.csv reports/reference.csv
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          name: serving-${{ github.sha }}
+          path: |
+            reports/serving-image.tar
+            reports/model.joblib
+            reports/reference.csv
+          retention-days: 7

@@ -1,58 +1,60 @@
-# ITCS355 Lab 4 — continuous deployment.
-#
-# Runs only on main, only after CI is green. Credentials come from OIDC federation, not
-# from stored keys. Configured for Azure with workload identity federation.
-
 name: CD
-
 on:
   workflow_run:
     workflows: [CI]
     types: [completed]
     branches: [main]
-
 permissions:
   contents: read
+  actions: read
   id-token: write
-
+concurrency:
+  group: staging-deployment
+  cancel-in-progress: false
 jobs:
   deploy-staging:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     environment: staging
+    env:
+      TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+      ACR_NAME: ${{ vars.ACR_NAME }}
+      CONTAINER_REGISTRY: ${{ vars.CONTAINER_REGISTRY }}
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      AZUREML_WORKSPACE: ${{ vars.AZUREML_WORKSPACE }}
+      STAGING_ENDPOINT: ${{ vars.STAGING_ENDPOINT || 'itcs355-staging' }}
+      STAGING_INSTANCE: ${{ vars.STAGING_INSTANCE || 'Standard_DS3_v2' }}
     steps:
       - uses: actions/checkout@v4
-
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
-
-      # --- Azure OIDC Authentication ----------------------------------------
+          python-version: '3.12'
+      - run: pip install PyYAML==6.0.2
+      - uses: actions/download-artifact@v4
+        with:
+          name: serving-${{ github.event.workflow_run.head_sha }}
+          path: reports
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
       - uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Login to Azure Container Registry
-        run: az acr login --name ${{ vars.ACR_NAME || 'itcs3556688218' }}
-
-      - name: Push image
+      - name: Push the tested image
         run: |
-          docker tag itcs355-serve:${{ github.sha }} ${{ vars.CONTAINER_REGISTRY || 'itcs3556688218.azurecr.io/itcs355' }}:${{ github.sha }}
-          docker push ${{ vars.CONTAINER_REGISTRY || 'itcs3556688218.azurecr.io/itcs355' }}:${{ github.sha }}
-
-      - name: Deploy to staging
+          : "${ACR_NAME:?Set ACR_NAME}" "${CONTAINER_REGISTRY:?Set CONTAINER_REGISTRY}"
+          az acr login --name "$ACR_NAME"
+          docker load -i reports/serving-image.tar
+          docker tag "itcs355-serve:$TESTED_SHA" "$CONTAINER_REGISTRY:$TESTED_SHA"
+          docker push "$CONTAINER_REGISTRY:$TESTED_SHA"
+      - name: Deploy registered model in the tested container and smoke test staging
         run: |
-          python -c "from src import config; from cloudlayer.factory import get_adapter; \
-            adapter = get_adapter(config.load(strict=False)); \
-            adapter.deploy(model_ref='${{ vars.CONTAINER_REGISTRY || \"itcs3556688218.azurecr.io/itcs355\" }}:${{ github.sha }}', endpoint='itcs355-staging', instance='Standard_F2s_v2', deployment_name='staging', traffic=100)"
-
-      - name: Smoke test
-        run: |
-          python scripts/smoke.py --endpoint https://itcs355-staging.${{ vars.REGION || 'eastasia' }}.inference.ml.azure.com/score || python scripts/smoke.py --local
+          az extension add --name ml --upgrade --yes
+          python scripts/deploy_staging.py

@@ -16,7 +16,10 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST
+
+from service import telemetry
 
 from service.schemas import BatchRequest, BatchResponse, PredictRequest, PredictResponse
 
@@ -49,7 +52,14 @@ def _load_model():
 
     import joblib
 
-    path = Path(os.environ.get("MODEL_PATH", "reports/model.joblib"))
+    mounted = os.environ.get("AZUREML_MODEL_DIR")
+    if mounted and not os.environ.get("MODEL_PATH"):
+        matches = list(Path(mounted).rglob("model.joblib"))
+        if len(matches) != 1:
+            raise RuntimeError("Expected exactly one model.joblib in the registered model mount")
+        path = matches[0]
+    else:
+        path = Path(os.environ.get("MODEL_PATH", "reports/model.joblib"))
     if not path.exists():
         raise RuntimeError(
             "No model available. Set MODEL_REGISTRY_NAME and MODEL_VERSION, or MODEL_PATH."
@@ -60,7 +70,10 @@ def _load_model():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
+        STATE["version"] = os.environ.get("MODEL_VERSION", "unknown")
         STATE["model"] = _load_model()
+        telemetry.VERSION.clear()
+        telemetry.VERSION.labels(str(STATE["version"])).set(1)
         log.info('"model loaded, version=%s"', STATE["version"])
     except Exception as exc:  # readiness stays false; liveness still passes
         STATE["model"] = None
@@ -76,8 +89,16 @@ app = FastAPI(title="ITCS355 inference", version="1.0.0", lifespan=lifespan)
 async def add_request_context(request: Request, call_next):
     request_id = request.headers.get("x-request-id", str(uuid.uuid4()))
     started = time.perf_counter()
-    response = await call_next(request)
-    latency_ms = (time.perf_counter() - started) * 1000
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+    finally:
+        latency_ms = (time.perf_counter() - started) * 1000
+        route = getattr(request.scope.get("route"), "path", "unmatched")
+        if request.url.path != "/metrics":
+            telemetry.REQUESTS.labels(route, f"{status // 100}xx").inc()
+            telemetry.LATENCY.labels(route).observe(latency_ms)
     response.headers["x-request-id"] = request_id
     response.headers["x-model-version"] = str(STATE["version"])
     log.info(
@@ -85,6 +106,24 @@ async def add_request_context(request: Request, call_next):
         request_id, request.url.path, response.status_code, latency_ms, STATE["version"],
     )
     return response
+
+
+@app.get("/metrics")
+def metrics():
+    return Response(content=telemetry.render_metrics(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.get("/monitoring/window", include_in_schema=False)
+def monitoring_window(request: Request):
+    # A deployment may expose this for scheduled drift checks. Never expose raw
+    # production inputs without an explicitly configured bearer token.
+    import secrets
+
+    token = os.environ.get("MONITORING_TOKEN", "")
+    provided = request.headers.get("authorization", "")
+    if not token or not secrets.compare_digest(provided, "Bearer " + token):
+        raise HTTPException(status_code=403, detail="monitoring access denied")
+    return {"rows": telemetry.recent_inputs()}
 
 
 @app.get("/health")
@@ -114,7 +153,9 @@ def _score(rows: list[dict]) -> list[float]:
     from src.data import FEATURES
 
     frame = pd.DataFrame(rows)[FEATURES]
-    return [float(p) for p in STATE["model"].predict_proba(frame)[:, 1]]
+    scores = [float(p) for p in STATE["model"].predict_proba(frame)[:, 1]]
+    telemetry.record_inputs(rows)
+    return scores
 
 
 @app.post("/predict", response_model=PredictResponse)

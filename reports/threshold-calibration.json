@@ -1,0 +1,11 @@
+{
+  "seed": 42,
+  "trials": 500,
+  "window_samples": 300,
+  "threshold": 0.2,
+  "baseline_p95": 0.049838430448188115,
+  "baseline_p99": 0.06444896308879396,
+  "baseline_false_alert_fraction": 0.0,
+  "six_degree_shift_detection_fraction": 1.0,
+  "limitation": "Bootstrap simulation from this synthetic training set; not a guarantee for live telemetry."
+}

@@ -24,7 +24,7 @@ RAW = config.REPO_ROOT / "data" / "raw" / "sensors.csv"
 @pytest.fixture(scope="module")
 def df():
     if not RAW.exists():
-        pytest.skip("data/raw/sensors.csv missing — run `make data` or `dvc pull` first")
+        pytest.fail("data/raw/sensors.csv missing — run `make data` or `dvc pull` first")
     return data.load_raw(RAW)
 
 
@@ -91,7 +91,10 @@ def test_every_row_lands_in_exactly_one_split(df):
     assert total == len(df), f"rows lost or duplicated: {total} vs {len(df)}"
 
 
-def test_data_fingerprint_is_stable():
-    if not RAW.exists():
-        pytest.skip("no raw data")
-    assert data.data_fingerprint(RAW) == data.data_fingerprint(RAW)
+def test_data_fingerprint_is_stable(tmp_path):
+    copy = tmp_path / "copy.csv"
+    copy.write_bytes(RAW.read_bytes())
+    original = data.data_fingerprint(RAW)
+    assert data.data_fingerprint(copy) == original
+    copy.write_bytes(copy.read_bytes() + b"\n")
+    assert data.data_fingerprint(copy) != original

@@ -20,13 +20,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# Domain-justified PSI thresholds for industrial sensor telemetry:
-# Credit scoring conventions (0.10 / 0.25) assume vast static consumer populations.
-# For high-frequency industrial machinery (temp_c, vibration_mm_s, pressure_kpa),
-# natural operational fluctuation produces baseline PSI in the range [0.01, 0.06].
-# We define PSI_NO_CHANGE = 0.08 and PSI_MODERATE = 0.20. An alert threshold of 0.20
-# guarantees early detection of mechanical degradation and sensor calibration decay
-# while avoiding alert fatigue caused by normal batch variance.
+# Calibrated with scripts/calibrate_drift.py on 500 bootstrap windows (300 rows,
+# seed 42): baseline PSI p99=0.06445; threshold 0.20 produced no baseline
+# alerts and detected every +6 C shift in this simulation. This is a defended
+# starting threshold for this synthetic dataset, not a production guarantee.
 PSI_NO_CHANGE = 0.08
 PSI_MODERATE = 0.20
 
@@ -41,6 +38,14 @@ class FeatureDrift:
     verdict: str
 
 
+def valid_windows(reference, current):
+    reference, current = np.asarray(reference, dtype=float), np.asarray(current, dtype=float)
+    for values in (reference, current):
+        if values.ndim != 1 or not len(values) or not np.isfinite(values).all():
+            raise ValueError("Drift inputs must be nonempty, finite one-dimensional arrays")
+    return reference, current
+
+
 def psi(reference: np.ndarray, current: np.ndarray, bins: int = 10) -> float:
     """Population Stability Index.
 
@@ -48,7 +53,15 @@ def psi(reference: np.ndarray, current: np.ndarray, bins: int = 10) -> float:
     Sensitive to changes in shape, not only in mean — which is why a feature can drift
     badly while its average looks untouched.
     """
-    edges = np.quantile(reference, np.linspace(0, 1, bins + 1))
+    reference, current = valid_windows(reference, current)
+    if bins < 2:
+        raise ValueError("At least two bins are required")
+    if np.ptp(reference) == 0:
+        center = float(reference[0])
+        tolerance = max(abs(center) * 1e-6, 1e-6)
+        edges = np.array([-np.inf, center - tolerance, center + tolerance, np.inf])
+    else:
+        edges = np.quantile(reference, np.linspace(0, 1, bins + 1))
     edges[0], edges[-1] = -np.inf, np.inf
     edges = np.unique(edges)
     if len(edges) < 3:
@@ -70,6 +83,7 @@ def ks_statistic(reference: np.ndarray, current: np.ndarray) -> float:
     Complements PSI. KS is more sensitive to a shift in location; PSI to a change in shape.
     Reporting both, and noticing when they disagree, is worth more than either alone.
     """
+    reference, current = valid_windows(reference, current)
     ref = np.sort(reference)
     cur = np.sort(current)
     pooled = np.concatenate([ref, cur])

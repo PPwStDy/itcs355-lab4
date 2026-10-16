@@ -1,0 +1,6 @@
+# Build from the exact tested serving image, then register it as an Azure ML environment.
+ARG SERVING_IMAGE
+FROM ${SERVING_IMAGE}
+USER root
+RUN pip install --no-cache-dir azure-identity==1.21.0 azure-keyvault-secrets==4.9.0
+USER runner
